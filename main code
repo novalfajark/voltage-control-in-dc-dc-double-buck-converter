@@ -1,0 +1,122 @@
+#include <STM32F4ADC.h>
+STM32ADC inADC(ADC1);
+
+int count, car, car1, car2;
+int mod_final;
+int vact, iact, err, err_v, iref;
+
+double itg, lastitg, pi, mod, Bmod, P, I;
+double vref, itg_v, lastitg_v, pi_v, P_v, I_v;
+
+uint8_t analog_pins[] = {PA0, PA1, PA4};
+
+/* CONTROL */
+float kp_v = 0.001;
+float ki_v = 0.1;
+float kp = 0.001;
+float ki = 0.1;
+
+void setup()
+{
+  Serial.begin(9600);
+  for (uint8_t x = 0; x < sizeof(analog_pins); x++)
+    pinMode(analog_pins[x], INPUT_ANALOG);
+
+  Timer5.init();
+  Timer5.pause();
+  Timer5.setMasterMode(TIMER_MASTER_MODE_UPDATE);
+  Timer5.setPeriod(10000);
+  Timer5.setMode(TIMER_CH2, TIMER_OUTPUT_COMPARE);
+  Timer5.setCompare(TIMER_CH2, 1);
+  Timer5.attachInterrupt(TIMER_CH2, INT1);
+  Timer5.refresh();
+  Timer5.resume();
+
+  Timer3.init(); //PWM timer
+  Timer3.setPeriod(20);
+  Timer3.refresh();
+
+  Timer4.init();
+  Timer4.setPeriod(20);
+  Timer4.refresh();
+  Timer4.setCount(1689);
+
+  Timer3.resume();
+  Timer4.resume();
+
+  pinMode(PB0, PWM);
+  pinMode(PB6, PWM);
+  pinMode(PB7, PWM);
+  pinMode(PB8, PWM);
+
+  inADC.setSamplingTime(ADC_SMPR_3);
+  inADC.enableDMA();
+  vref = 0;
+}
+
+void loop()
+{
+  while (1)
+  {
+    sensor();
+    Control();
+  }
+}
+
+void INT1()
+{
+  vref=2875;
+  if (vref > 4000)
+  {
+    vref = 4000;
+  }
+  if (vref < 0)
+  {
+    vref = 0;
+  }
+  Serial.print(vref);
+  Serial.print("  ");
+  Serial.println(vact);
+  Serial.print("  ");
+  Serial.print(iref);
+  Serial.print("  ");
+  Serial.println(iact);
+}
+void sensor()
+{
+  vact = map(analogRead(PA0), 0, 4095, 0, 4000); //v actual
+  iact = map(analogRead(PA1), 0, 4095, -2000, 2000); //act arus
+  //vref = map(analogRead(PA4), 0, 4095, 0, 4000); //v ref
+}
+
+void Control()
+{
+  //refv = 4000;
+  err_v = vref - vact;
+  P_v = kp_v * err_v;
+  itg_v = lastitg_v + err_v * 0.0001;
+  I_v = ki_v * itg_v;
+  pi_v = P_v + I_v;
+
+  if (pi_v > -2000 && pi_v < 2000) //current anti windup
+  {
+    lastitg_v = itg_v;
+  }
+
+  //iref = pi_v ;
+  err = iref - iact;
+  P = kp * err;
+  itg = lastitg + err * 0.0001;
+  I = ki * itg;
+  pi = P + I;//
+
+  mod = pi;
+  if (mod < -2500) //limiter
+    mod = -2500;
+  if (mod > -2500 && mod < 3360) //mod anti windup
+  {
+    lastitg = itg;
+  }
+  pwmWrite(PB6, mod); //S1
+  pwmWrite(PB0, mod); //S2
+}
